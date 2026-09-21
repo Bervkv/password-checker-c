@@ -5,7 +5,8 @@
 #include <stdbool.h>
 #include <math.h>
 
-#define MAX_WORDS 10000
+#define MAX_WORDS 20000
+
 typedef struct {
     bool length_ok;
     bool has_upper;
@@ -14,33 +15,31 @@ typedef struct {
     bool has_symbol;
 } PasswordCheck;
 
-typedef struct{
+typedef struct {
     char **words;
     int count;
-}WordList;
+} WordList;
 
 bool has_repetition(const char* password, int max_repeat){
     int size = strlen(password);
     int streak = 1;
-    for (int i = 1; i < size ; i++)
+    for (int i = 1; i < size; i++)
     {
         if (password[i] != password[i-1])
         {
             streak = 1;
         }
-        else if (password[i] == password[i-1])
+        else
         {
             streak++;
         }
-        
-       if (streak > max_repeat)
-        {   
+
+        if (streak > max_repeat)
+        {
             return true;
         }
-
     }
-  return false;
-    
+    return false;
 }
 
 bool has_sequence(const char *password, int min_seq_len) {
@@ -90,7 +89,7 @@ void normalize_leetspeak(const char *password, char *output) {
     output[size] = '\0';
 }
 
-bool is_common_password(char* password, WordList list){
+bool is_common_password(const char* password, WordList list){
     for (int i = 0; i < list.count; i++)
     {
         if (strcmp(password, list.words[i]) == 0)
@@ -106,7 +105,7 @@ WordList load_common_passwords(const char* filepath){
     FILE *file = fopen(filepath, "r");
     if (file == NULL)
     {
-        printf("Error: Could Not open %s\n", filepath);
+        printf("Error: could not open %s\n", filepath);
         List.count = 0;
         List.words = NULL;
         return List;
@@ -116,15 +115,26 @@ WordList load_common_passwords(const char* filepath){
     List.count = 0;
     while (fgets(line_buffer, sizeof(line_buffer), file))
     {
+        if (List.count >= MAX_WORDS)
+        {
+            printf("Warning: wordlist exceeds %d entries, extra entries ignored.\n", MAX_WORDS);
+            break;
+        }
         line_buffer[strcspn(line_buffer, "\n")] = '\0';
         char *word_copy = malloc(strlen(line_buffer) + 1);
         strcpy(word_copy, line_buffer);
         List.words[List.count] = word_copy;
         List.count++;
     }
-    
-    
+    fclose(file);
     return List;
+}
+
+void free_wordlist(WordList *list) {
+    for (int i = 0; i < list->count; i++) {
+        free(list->words[i]);
+    }
+    free(list->words);
 }
 
 PasswordCheck basic_checks(const char *password){
@@ -155,9 +165,8 @@ PasswordCheck basic_checks(const char *password){
         {
             results.has_symbol = true;
         }
-        
     }
-    
+
     return results;
 }
 
@@ -165,53 +174,84 @@ double calculate_entropy(const char* password){
     PasswordCheck checks = basic_checks(password);
     int pool_size = 0;
 
-    if (checks.has_upper == true)    
+    if (checks.has_upper)
     {
         pool_size += 26;
     }
-    if (checks.has_lower == true)
+    if (checks.has_lower)
     {
         pool_size += 26;
     }
-    if (checks.has_digit == true)
+    if (checks.has_digit)
     {
         pool_size += 10;
     }
-    if (checks.has_symbol == true)
+    if (checks.has_symbol)
     {
         pool_size += 32;
     }
-    
+
     if (pool_size == 0)
     {
         return 0.0;
     }
-    
+
     return strlen(password) * log2(pool_size);
-    
+}
+
+void print_verdict(bool is_common, bool is_common_leet, bool repetition, bool sequence, double entropy) {
+    if (is_common || is_common_leet) {
+        printf("Verdict: WEAK (password found in the common password list)\n");
+    } else if (repetition || sequence) {
+        printf("Verdict: WEAK (predictable pattern detected)\n");
+    } else if (entropy < 28) {
+        printf("Verdict: WEAK (entropy too low: %.2f bits)\n", entropy);
+    } else if (entropy < 60) {
+        printf("Verdict: MODERATE (entropy: %.2f bits)\n", entropy);
+    } else {
+        printf("Verdict: STRONG (entropy: %.2f bits)\n", entropy);
+    }
 }
 
 int main(void){
-    PasswordCheck result = basic_checks("Hello123!");
     WordList common = load_common_passwords("common_passwords.txt");
-    bool comparator = is_common_password("password", common);
-    bool repetition = has_repetition("Hello123!",3);
-    bool sequence = has_sequence("Hello123!", 3);
-    printf("Comparator: %d\n", comparator);
-    printf("First Word : %s\n", common.words[0]);
+    if (common.words == NULL)
+    {
+        printf("Unable to load common passwords.\n");
+        return 1;
+    }
 
-    printf("Loaded %d words\n", common.count);
+    char password[256];
+    printf("Enter a password to check: ");
+    fgets(password, sizeof(password), stdin);
+    password[strcspn(password, "\n")] = '\0';
 
-    printf("length_ok: %d\n", result.length_ok);
-    printf("has_upper: %d\n", result.has_upper);
-    printf("has_lower: %d\n", result.has_lower);
-    printf("has_digit: %d\n", result.has_digit);
-    printf("has_symbol: %d\n", result.has_symbol);
-    printf("has repetition: %d\n", repetition);
-    printf("has sequence: %d\n", sequence);
+    PasswordCheck result = basic_checks(password);
+    double entropy = calculate_entropy(password);
+    bool is_common = is_common_password(password, common);
 
-    double entropy = calculate_entropy("Hello123!");
-    printf("entropy: %f\n", entropy);
+    char normalized[256];
+    normalize_leetspeak(password, normalized);
+    bool is_common_leet = is_common_password(normalized, common);
 
+    bool repetition = has_repetition(password, 3);
+    bool sequence = has_sequence(password, 3);
+
+    printf("\n--- Password Report ---\n");
+    printf("Length: %zu\n", strlen(password));
+    printf("  [%c] length >= 12\n", result.length_ok ? 'x' : ' ');
+    printf("  [%c] uppercase\n", result.has_upper ? 'x' : ' ');
+    printf("  [%c] lowercase\n", result.has_lower ? 'x' : ' ');
+    printf("  [%c] digit\n", result.has_digit ? 'x' : ' ');
+    printf("  [%c] symbol\n", result.has_symbol ? 'x' : ' ');
+    printf("Entropy: %.2f bits\n", entropy);
+    printf("In common password list: %s\n", is_common ? "YES" : "no");
+    printf("In common list (leetspeak-normalized to '%s'): %s\n", normalized, is_common_leet ? "YES" : "no");
+    printf("Suspicious repetition: %s\n", repetition ? "YES" : "no");
+    printf("Suspicious sequence: %s\n", sequence ? "YES" : "no");
+    print_verdict(is_common, is_common_leet, repetition, sequence, entropy);
+    printf("------------------------\n");
+
+    free_wordlist(&common);
     return 0;
 }
